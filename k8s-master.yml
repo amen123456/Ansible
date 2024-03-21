@@ -1,24 +1,70 @@
-- hosts: masters
-  become: yes
+---
+- name: Setup Kubernetes Cluster
+  hosts: all
+  become: true
   tasks:
-    - name: initialize K8S cluster
-      shell: kubeadm init --pod-network-cidr=172.16.0.0/16 --apiserver-advertise-address=10.0.0.100
+    - name: Update and upgrade apt packages
+      apt:
+        upgrade: yes
+        update_cache: yes
+        cache_valid_time: 3600 # Cache valid for 1 hour to avoid repeated updates
 
-    - name: create .kube directory
-      file:
-        path: $HOME/.kube
-        state: directory
-        mode: 0755
+    - name: Install docker.io
+      apt:
+        name: docker.io
+        state: present
 
-    - name: copy admin.conf to user kube config
-      copy:
-        src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
-        remote_src: yes
+    - name: Ensure Docker is enabled and running
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
 
-    - name: install Pod network
-      become: yes
-      shell: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/a70459be0084506e4ec919aa1c114638878db11b/Documentation/kube-flannel.yml >> pod_network_setup.txt
-      args:
-        chdir: $HOME
-        creates: pod_network_setup.txt
+    - name: Add apt signing key for Kubernetes
+      ansible.builtin.apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Add Kubernetes APT repository
+      apt_repository:
+        repo: "deb http://apt.kubernetes.io/ kubernetes-xenial main"
+        state: present
+
+    - name: Install kubeadm, kubelet, and kubectl
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
+      notify: hold kubernetes packages
+
+    - name: Disable swap
+      shell: swapoff -a
+      changed_when: false
+
+    - name: Set hostname for master-node
+      hostname:
+        name: master-node
+      when: inventory_hostname == 'your_master_node_inventory_name'
+
+    - name: Set hostname for worker nodes
+      hostname:
+        name: "{{ inventory_hostname }}"
+      when: inventory_hostname in groups['your_worker_group']
+
+    - name: Initialize the Kubernetes cluster
+      shell: kubeadm init --pod-network-cidr=10.244.0.0/16
+      when: inventory_hostname == 'your_master_node_inventory_name'
+      ignore_errors: yes
+
+  handlers:
+    - name: hold kubernetes packages
+      apt:
+        name: "{{ item }}"
+        state: hold
+      loop:
+        - kubeadm
+        - kubelet
+        - kubectl
