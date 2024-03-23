@@ -19,7 +19,7 @@
        state: absent
 
    - name: install Docker
-     yum:
+     apt:
        name: docker
        state: present
        update_cache: true
